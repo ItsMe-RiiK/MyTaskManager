@@ -1,0 +1,5 @@
+obj/
+taskmanager
+compile_flags.txt
+run_taskmanager.sh
+*.o
