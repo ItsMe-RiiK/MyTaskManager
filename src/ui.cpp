@@ -1,5 +1,21 @@
 #include "ui.h"
 #include <algorithm>
+#include <limits.h>
+#include <string>
+#include <unistd.h>
+
+std::string get_executable_dir() {
+  char result[PATH_MAX];
+  ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
+  if (count != -1) {
+    std::string path(result, count);
+    size_t last_slash = path.find_last_of('/');
+    if (last_slash != std::string::npos) {
+      return path.substr(0, last_slash);
+    }
+  }
+  return "";
+}
 
 enum {
   COL_PID = 0,
@@ -48,19 +64,18 @@ void UIManager::run(int argc, char *argv[]) {
     gtk_widget_set_visual(window, visual);
   }
 
-  // Set icon for window (use absolute path so it works with pkexec)
-  gtk_window_set_icon_from_file(
-      GTK_WINDOW(window), "/home/Syakir/MyTaskManager/resource/IconApp.png",
-      NULL);
+  // Set icon for window (use dynamic path so it works with relocations)
+  std::string icon_path = get_executable_dir() + "/resource/IconApp.png";
+  gtk_window_set_icon_from_file(GTK_WINDOW(window), icon_path.c_str(), NULL);
 
   // Modern Header Bar (gives rounded top corners natively in GTK3)
   GtkWidget *header_bar = gtk_header_bar_new();
   gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header_bar), TRUE);
-  gtk_header_bar_set_title(GTK_HEADER_BAR(header_bar), "MyLinuxTaskManager");
+  gtk_header_bar_set_title(GTK_HEADER_BAR(header_bar), "TaskManager");
 
   // Add icon to header bar
-  GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_scale(
-      "/home/Syakir/MyTaskManager/resource/IconApp.png", 24, 24, TRUE, NULL);
+  GdkPixbuf *pixbuf =
+      gdk_pixbuf_new_from_file_at_scale(icon_path.c_str(), 24, 24, TRUE, NULL);
   if (pixbuf) {
     GtkWidget *icon = gtk_image_new_from_pixbuf(pixbuf);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(header_bar), icon);
@@ -76,8 +91,7 @@ void UIManager::run(int argc, char *argv[]) {
   gtk_window_set_titlebar(GTK_WINDOW(window), header_bar);
 
   gtk_window_set_default_size(GTK_WINDOW(window), 900, 700);
-  gtk_window_set_position(GTK_WINDOW(window),
-                          GTK_WIN_POS_CENTER); // Center on screen
+  gtk_window_set_position(GTK_WINDOW(window), GTK_WIN_POS_CENTER);
   g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
   g_signal_connect(window, "key-press-event", G_CALLBACK(on_window_key_press),
                    this);

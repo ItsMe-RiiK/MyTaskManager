@@ -268,7 +268,6 @@ std::vector<ProcessInfo> ProcessManager::get_processes() {
         info.cpu_usage = 0.0;
         info.is_app = check_is_app(pid);
 
-        // Read /proc/[pid]/status
         std::string status_path = "/proc/" + dir_name + "/status";
         std::ifstream status_file(status_path);
         int uid = -1;
@@ -310,10 +309,32 @@ std::vector<ProcessInfo> ProcessManager::get_processes() {
           std::getline(cmdline_file, cmdline, '\0');
           if (!cmdline.empty()) {
             size_t pos = cmdline.find_last_of('/');
-            if (pos != std::string::npos) {
-              info.name = cmdline.substr(pos + 1);
-            } else {
-              info.name = cmdline;
+            std::string cmd_name =
+                (pos != std::string::npos) ? cmdline.substr(pos + 1) : cmdline;
+
+            // If the name is generic like "exe" or "AppRun", try to use the
+            // parent directory name
+            if (cmd_name == "exe" || cmd_name == "AppRun" ||
+                cmd_name == "chrome_crashpad_handler") {
+              if (pos != std::string::npos && pos > 0) {
+                size_t parent_pos = cmdline.find_last_of('/', pos - 1);
+                if (parent_pos != std::string::npos) {
+                  std::string parent_dir =
+                      cmdline.substr(parent_pos + 1, pos - parent_pos - 1);
+                  if (!parent_dir.empty() && parent_dir != "bin" &&
+                      parent_dir != "usr") {
+                    cmd_name = parent_dir;
+                  }
+                }
+              }
+            }
+
+            // Only overwrite info.name if the new name is longer and starts
+            // with the old name (this restores untruncated names without
+            // breaking descriptive thread names like "Web Content") Or if the
+            // original name was literally "exe"
+            if (info.name == "exe" || cmd_name.rfind(info.name, 0) == 0) {
+              info.name = cmd_name;
             }
           }
         }

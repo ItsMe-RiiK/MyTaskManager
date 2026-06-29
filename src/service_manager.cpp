@@ -36,7 +36,6 @@ std::vector<ServiceInfo> ServiceManager::get_services() {
     std::string desc;
     std::getline(ss, desc);
     if (!desc.empty()) {
-      // hapus spasi berlebih di awal
       size_t start = desc.find_first_not_of(" \t");
       if (start != std::string::npos) {
         info.description = desc.substr(start);
