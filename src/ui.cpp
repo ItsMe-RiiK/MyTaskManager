@@ -383,53 +383,85 @@ void UIManager::refresh_processes() {
 
   auto get_expected_parent = [&](int pid, int ppid, const std::string &name,
                                  bool is_app) -> int {
-    // If parent process not found (dead/orphan), put it to root
-    if (new_procs.find(ppid) == new_procs.end()) {
-      return 0;
+    bool parent_exists = (new_procs.find(ppid) != new_procs.end());
+
+    // 1. Categorize Parent: Is it System Init or Desktop Environment (DE)?
+    bool parent_is_init = false;
+    bool parent_is_de = false;
+
+    if (parent_exists) {
+      std::string p_name = new_procs[ppid].name;
+      std::string p_base = p_name.substr(0, p_name.find(' '));
+
+      // Detect System Core (Daemon)
+      if (ppid <= 2 || p_base.find("systemd") != std::string::npos ||
+          p_base.find("kthreadd") != std::string::npos ||
+          p_base.find("lightdm") != std::string::npos) {
+        parent_is_init = true;
+      }
+      // Detect Desktop Environment
+      else if (p_base.find("cinnamon") != std::string::npos ||
+               p_base.find("gnome-shell") != std::string::npos ||
+               p_base.find("plasma") != std::string::npos) {
+        parent_is_de = true;
+      }
+    } else {
+      parent_is_init = true; // Orphan considered to run to init
     }
 
-    // Extract application base name (first word before space)
-    std::string base_name = name.substr(0, name.find(' '));
+    // 2. Is this process itself a component of DE?
+    std::string my_base = name.substr(0, name.find(' '));
+    bool am_i_de = (my_base.find("cinnamon") != std::string::npos ||
+                    my_base.find("gnome-shell") != std::string::npos);
 
-    // SMART GROUPING: Collect all child processes to "Master" application
+    // 3. If the parent is a normal application (not Init & not DE), follow OS
+    // Tree! This keeps the original process like bwrap -> glycin-svg intact
+    // nested.
+    if (!parent_is_init && !parent_is_de) {
+      return ppid;
+    }
+
+    // 4. SMART GROUPING (Find parent for separate child processes)
     int best_parent_pid = 0;
     for (const auto &pair : new_procs) {
       if (pair.first == pid)
-        continue; // Don't check yourself
+        continue;
 
       std::string cand_name = pair.second.name;
       std::string cand_base = cand_name.substr(0, cand_name.find(' '));
 
-      // Find the earliest process with the same name (smallest PID)
-      if (base_name == cand_base) {
+      // Check Prefix: Does this process name start with the candidate's name?
+      // (Example: "msedge_crashpad" starts with the word "msedge")
+      if (cand_base.length() >= 3 && name.find(cand_base) == 0) {
         if (best_parent_pid == 0 || pair.first < best_parent_pid) {
           best_parent_pid = pair.first;
         }
       }
     }
 
-    // If found master process, merge it to master process
     if (best_parent_pid != 0 && best_parent_pid < pid) {
-      return best_parent_pid;
+      return best_parent_pid; // Successfully found parent, merge to Master!
     }
 
-    // Separate App and System
-    // If this process is an Application (has interface / is_app) AND
-    // it is a Master process (does not have a master above), free it.
-    if (is_app) {
-      std::string p_name = new_procs[ppid].name;
-      std::string p_base = p_name.substr(0, p_name.find(' '));
+    // 5. Breakout Logic (Breakout to Surface)
+    if (parent_is_de && !am_i_de) {
+      // If called by DE (e.g., clicking msedge shortcut in Cinnamon menu),
+      // Always free to root, regardless of is_app true/false.
+      return 0;
+    }
 
-      if (ppid <= 2 || p_base == "systemd" || p_base == "cinnamon" ||
-          p_base == "cinnamon-session" || p_base == "gnome-shell" ||
-          p_base == "plasma-desktop" || p_base == "lightdm" ||
-          p_base == "kthreadd") {
-        return 0; // Move to surface
+    if (parent_is_init && !am_i_de) {
+      // If child is systemd, free only if it is proven to be a GUI application
+      // (is_app = true). Background service (is_app = false) will run to the
+      // 'else' block and remain hidden.
+      if (is_app) {
+        return 0;
+      } else {
+        return parent_exists ? ppid : 0;
       }
     }
 
-    // System Process
-    return ppid;
+    return parent_exists ? ppid : 0;
   };
 
   std::set<int> remaining_pids;
