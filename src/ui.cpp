@@ -381,12 +381,55 @@ void UIManager::refresh_processes() {
     children_map[p.ppid].push_back(p.pid);
   }
 
-  auto get_expected_parent = [&](int ppid) -> int {
-    if (new_procs.find(ppid) == new_procs.end())
+  auto get_expected_parent = [&](int pid, int ppid, const std::string &name,
+                                 bool is_app) -> int {
+    // If parent process not found (dead/orphan), put it to root
+    if (new_procs.find(ppid) == new_procs.end()) {
       return 0;
-    if (children_map[ppid].size() > 1)
-      return ppid;
-    return 0;
+    }
+
+    // Extract application base name (first word before space)
+    std::string base_name = name.substr(0, name.find(' '));
+
+    // SMART GROUPING: Collect all child processes to "Master" application
+    int best_parent_pid = 0;
+    for (const auto &pair : new_procs) {
+      if (pair.first == pid)
+        continue; // Don't check yourself
+
+      std::string cand_name = pair.second.name;
+      std::string cand_base = cand_name.substr(0, cand_name.find(' '));
+
+      // Find the earliest process with the same name (smallest PID)
+      if (base_name == cand_base) {
+        if (best_parent_pid == 0 || pair.first < best_parent_pid) {
+          best_parent_pid = pair.first;
+        }
+      }
+    }
+
+    // If found master process, merge it to master process
+    if (best_parent_pid != 0 && best_parent_pid < pid) {
+      return best_parent_pid;
+    }
+
+    // Separate App and System
+    // If this process is an Application (has interface / is_app) AND
+    // it is a Master process (does not have a master above), free it.
+    if (is_app) {
+      std::string p_name = new_procs[ppid].name;
+      std::string p_base = p_name.substr(0, p_name.find(' '));
+
+      if (ppid <= 2 || p_base == "systemd" || p_base == "cinnamon" ||
+          p_base == "cinnamon-session" || p_base == "gnome-shell" ||
+          p_base == "plasma-desktop" || p_base == "lightdm" ||
+          p_base == "kthreadd") {
+        return 0; // Move to surface
+      }
+    }
+
+    // System Process
+    return ppid;
   };
 
   std::set<int> remaining_pids;
@@ -416,7 +459,9 @@ void UIManager::refresh_processes() {
           bool keep = false;
 
           if (it != new_procs.end()) {
-            int expected_ppid = get_expected_parent(it->second.ppid);
+            int expected_ppid = get_expected_parent(
+                pid, it->second.ppid, it->second.name, it->second.is_app);
+
             if (expected_ppid == expected_parent_pid) {
               keep = true;
             }
@@ -461,9 +506,11 @@ void UIManager::refresh_processes() {
       return;
 
     const auto &p = new_procs[pid];
-    int expected_ppid = get_expected_parent(p.ppid);
+
+    int expected_ppid = get_expected_parent(p.pid, p.ppid, p.name, p.is_app);
 
     GtkTreeIter parent_iter;
+
     bool has_parent = false;
 
     if (expected_ppid != 0) {
